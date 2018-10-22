@@ -4,6 +4,12 @@ use tcod::console::*;
 use tcod::colors;
 use tcod::colors::Color;
 
+extern crate rand;
+use rand::Rng;
+
+use std::cmp::min;
+use std::cmp::max;
+
 #[derive(Debug)]
 struct Object {
     x: i32,
@@ -44,11 +50,43 @@ impl Object {
     }
 }
 
+//
+// map-related stuff
+//
 const MAP_WIDTH: i32 = 80;
 const MAP_HEIGHT: i32 = 45;
 
+const MAX_ROOMS: i32 = 30;
+const MAX_ROOM_WIDTH: i32 = 15;
+const MIN_ROOM_WIDTH: i32 = 6;
+const MAX_ROOM_HEIGHT: i32 = 10;
+const MIN_ROOM_HEIGHT: i32 = 5;
+
 const COLOR_DARK_WALL: Color = Color { r:0, g:0, b:100 };
 const COLOR_DARK_GROUND: Color = Color { r:50, g:50, b:150 };
+
+#[derive(Clone, Copy, Debug)]
+struct Rect {
+    x1: i32,
+    y1: i32,
+    x2: i32,
+    y2: i32,
+}
+
+impl Rect {
+    pub fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
+        Rect {x1:x, y1:y, x2:x + w, y2: y + h}
+    }
+
+    pub fn center(&self) -> (i32, i32) {
+        ((self.x1 + self.x2)/2, (self.y1+self.y2)/2)
+    }
+
+    pub fn intersects_with(&self, other: &Rect) -> bool {
+        self.x1 <= other.x2 && self.x2 >= other.x1 &&
+        self.y1 <= other.y2 && self.y2 >= other.y1
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Tile {
@@ -75,11 +113,72 @@ impl Tile {
 
 type Map = Vec<Vec<Tile>>;
 
-fn make_map() -> Map {
-    let map = vec![vec![Tile::empty(); MAP_HEIGHT as usize]; MAP_WIDTH as usize];
-    map
+fn is_blocked(map: &Map, x: i32, y:i32) -> bool {
+    map[x as usize][y as usize].blocked
 }
 
+fn make_room(room: Rect, map: &mut Map) {
+    for x in (room.x1+1) .. room.x2 {
+        for y in (room.y1+1) .. room.y2 {
+            map[x as usize][y as usize] = Tile::empty();
+        }
+    }
+}
+
+fn make_h_tunnel(x1: i32, x2: i32, y: i32, map: &mut Map) {
+    for x in min(x1, x2)..(max(x1, x2)+1) {
+        map[x as usize][y as usize] = Tile::empty();
+    }
+}
+
+fn make_v_tunnel(y1: i32, y2: i32, x: i32, map: &mut Map) {
+    for y in min(y1, y2)..(max(y1, y2)+1) {
+        map[x as usize][y as usize] = Tile::empty();
+    }
+}
+
+fn make_map() -> (Map, (i32, i32)) {
+    let mut map = vec![vec![Tile::wall(); MAP_HEIGHT as usize]; MAP_WIDTH as usize];
+    let mut rng = rand::thread_rng();
+    let mut rooms = vec![];
+    let mut starting_position = (0, 0);
+    let mut prev_x = 0;
+    let mut prev_y = 0;
+
+    for _ in 0..MAX_ROOMS {
+        let w = rng.gen_range(MIN_ROOM_WIDTH, MAX_ROOM_WIDTH);
+        let h = rng.gen_range(MIN_ROOM_HEIGHT, MAX_ROOM_HEIGHT);
+        let room_rect = Rect::new(
+            rng.gen_range(0, MAP_WIDTH - w),
+            rng.gen_range(0, MAP_HEIGHT - h),
+            w, h);
+
+        let blocked = rooms.iter().any(|other_room| room_rect.intersects_with(other_room));
+        if !blocked {
+            make_room(room_rect, &mut map);
+            let (new_x, new_y) = room_rect.center();
+            if rooms.is_empty() {
+                starting_position = (new_x, new_y)
+            } else {
+                if rand::random() {
+                    make_h_tunnel(prev_x, new_x, prev_y, &mut map);
+                    make_v_tunnel(prev_y, new_y, new_x, &mut map);
+                } else {
+                    make_v_tunnel(prev_y, new_y, prev_x, &mut map);
+                    make_h_tunnel(prev_x, new_x, new_y, &mut map);
+                }
+            }
+            prev_x = new_x;
+            prev_y = new_y;
+            rooms.push(room_rect)
+        }
+    }
+    (map, starting_position)
+}
+
+//
+// primary game stuff
+//
 const SCREEN_WIDTH: i32 = 80;
 const SCREEN_HEIGHT: i32 = 50;
 const LIMIT_FPS: i32 = 20;
@@ -134,11 +233,9 @@ fn main() {
         .init();
 
     let mut con = Offscreen::new(MAP_WIDTH, MAP_HEIGHT);
-    let mut map = make_map();
-    map[30][22] = Tile::wall();
-    map[50][22] = Tile::wall();
+    let (mut map, (px, py)) = make_map();
 
-    let player = Object::new(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, '@', colors::WHITE);
+    let player = Object::new(px, py, '@', colors::WHITE);
     let npc = Object::new(SCREEN_WIDTH / 2 - 5, SCREEN_HEIGHT / 2, '@', colors::WHITE);
     let mut objects = [player, npc];
 
