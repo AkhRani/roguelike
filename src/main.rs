@@ -3,6 +3,7 @@ extern crate tcod;
 use tcod::console::*;
 use tcod::colors;
 use tcod::colors::Color;
+use tcod::map::{Map as FovMap, FovAlgorithm};
 
 extern crate rand;
 use rand::Rng;
@@ -63,7 +64,13 @@ const MAX_ROOM_HEIGHT: i32 = 10;
 const MIN_ROOM_HEIGHT: i32 = 5;
 
 const COLOR_DARK_WALL: Color = Color { r:0, g:0, b:100 };
+const COLOR_LIGHT_WALL: Color = Color { r:130, g:110, b:50 };
 const COLOR_DARK_GROUND: Color = Color { r:50, g:50, b:150 };
+const COLOR_LIGHT_GROUND: Color = Color { r:200, g:180, b:50 };
+
+const FOV_ALGO: FovAlgorithm = FovAlgorithm::Basic;
+const FOV_LIGHT_WALLS: bool = true;
+const TORCH_RADIUS: i32 = 10;
 
 #[derive(Clone, Copy, Debug)]
 struct Rect {
@@ -92,21 +99,23 @@ impl Rect {
 struct Tile {
     blocked: bool,
     block_sight: bool,
+    explored: bool,
 }
 
 impl Tile {
     pub fn empty() -> Self {
-        Tile {blocked: false, block_sight: false}
+        Tile {blocked: false, block_sight: false, explored: false}
     }
 
     pub fn wall() -> Self {
-        Tile {blocked: true, block_sight: true}
+        Tile {blocked: true, block_sight: true, explored: false}
     }
 
     pub fn new(blocked: bool, block_sight: bool) -> Self {
         Tile {
             blocked: blocked,
             block_sight: block_sight,
+            explored: false,
         }
     }
 }
@@ -206,18 +215,37 @@ fn handle_keys(root: &mut Root, player: &mut Object, map: &Map) -> bool {
     false
 }
 
-fn render_all(root: &mut Root, con: &mut Offscreen, objects: &[Object], map: &Map) {
-    for object in objects {
-        object.draw(con);
+fn render_all(root: &mut Root, con: &mut Offscreen, objects: &[Object], map: &mut Map, fov_map: &mut FovMap, recompute_fov: bool) {
+    if recompute_fov {
+        let player = &objects[0];
+        fov_map.compute_fov(player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
+
+        for x in 0..MAP_WIDTH {
+            let ux = x as usize;
+            for y in 0..MAP_HEIGHT {
+                let uy = y as usize;
+                let visible = fov_map.is_in_fov(x, y);
+                let wall = map[ux][uy].block_sight;
+                let color = match (visible, wall) {
+                    (false, true) => COLOR_DARK_WALL,
+                    (false, false) => COLOR_DARK_GROUND,
+                    (true, true) => COLOR_LIGHT_WALL,
+                    (true, false) => COLOR_LIGHT_GROUND,
+                };
+                let explored = &mut map[ux][uy].explored;
+                if visible {
+                    *explored = true;
+                }
+                if *explored {
+                    con.set_char_background(x, y, color, BackgroundFlag::Set);
+                }
+            }
+        }
     }
 
-    for x in 0..MAP_WIDTH {
-        for y in 0..MAP_HEIGHT {
-            if map[x as usize][y as usize].block_sight {
-                con.set_char_background(x, y, COLOR_DARK_WALL, BackgroundFlag::Set);
-            } else {
-                con.set_char_background(x, y, COLOR_DARK_GROUND, BackgroundFlag::Set);
-            }
+    for object in objects {
+        if fov_map.is_in_fov(object.x, object.y) {
+            object.draw(con);
         }
     }
 
@@ -235,21 +263,32 @@ fn main() {
     let mut con = Offscreen::new(MAP_WIDTH, MAP_HEIGHT);
     let (mut map, (px, py)) = make_map();
 
+    let mut fov_map = FovMap::new(MAP_WIDTH, MAP_HEIGHT);
+    for x in 0..MAP_WIDTH {
+        for y in 0..MAP_HEIGHT {
+            fov_map.set(x, y,
+                        !map[x as usize][y as usize].block_sight,
+                        !map[x as usize][y as usize].blocked);
+        }
+    }
+
     let player = Object::new(px, py, '@', colors::WHITE);
     let npc = Object::new(SCREEN_WIDTH / 2 - 5, SCREEN_HEIGHT / 2, '@', colors::WHITE);
     let mut objects = [player, npc];
 
     tcod::system::set_fps(LIMIT_FPS);
 
-
+    let mut previous_pos = (-1, -1);
     while !root.window_closed() {
-        render_all(&mut root, &mut con, &objects, &map);
+        let recompute_fov = previous_pos != (objects[0].x, objects[0].y);
+        render_all(&mut root, &mut con, &objects, &mut map, &mut fov_map, recompute_fov);
         root.flush();
 
         for object in &mut objects {
             object.clear(&mut con);
         }
 
+        previous_pos = (objects[0].x, objects[0].y);
         if handle_keys(&mut root, &mut objects[0], &map) {
             break;
         }
