@@ -72,6 +72,19 @@ const FOV_ALGO: FovAlgorithm = FovAlgorithm::Basic;
 const FOV_LIGHT_WALLS: bool = true;
 const TORCH_RADIUS: i32 = 10;
 
+fn color_blend(x1: i32, y1: i32, x2: i32, y2:i32, close: Color, far: Color, max_radius: i32) -> Color {
+    let dx = (max(x1, x2) - min(x1, x2)) as f32;
+    let dy = (max(y1, y2) - min(y1, y2)) as f32;
+    // adjacent squares should have max brighness
+    // squares at maximum visible distance should have min brightness.
+    let gradient = (close - far) / max_radius as f32;
+    close - gradient * (dx * dx + dy * dy).sqrt()
+}
+
+fn light_ground(x1: i32, y1: i32, x2: i32, y2:i32) -> Color {
+    color_blend(x1, y1, x2, y2, COLOR_LIGHT_GROUND, COLOR_DARK_GROUND, TORCH_RADIUS)
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Rect {
     x1: i32,
@@ -229,8 +242,12 @@ fn render_all(root: &mut Root, con: &mut Offscreen, objects: &[Object], map: &mu
                 let color = match (visible, wall) {
                     (false, true) => COLOR_DARK_WALL,
                     (false, false) => COLOR_DARK_GROUND,
-                    (true, true) => COLOR_LIGHT_WALL,
-                    (true, false) => COLOR_LIGHT_GROUND,
+                    (true, true) =>
+                        color_blend(player.x, player.y, x, y,
+                                    COLOR_LIGHT_WALL, COLOR_DARK_WALL, TORCH_RADIUS),
+                    (true, false) =>
+                        color_blend(player.x, player.y, x, y,
+                                    COLOR_LIGHT_GROUND, COLOR_DARK_GROUND, TORCH_RADIUS),
                 };
                 let explored = &mut map[ux][uy].explored;
                 if visible {
@@ -238,6 +255,7 @@ fn render_all(root: &mut Root, con: &mut Offscreen, objects: &[Object], map: &mu
                 }
                 if *explored {
                     con.set_char_background(x, y, color, BackgroundFlag::Set);
+                    con.put_char(x, y, if wall {'#'} else {'.'}, BackgroundFlag::None);
                 }
             }
         }
