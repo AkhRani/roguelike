@@ -34,7 +34,7 @@ impl Object {
         let next_x = self.x + dx;
         let next_y = self.y + dy;
         if 0 <= next_x && next_x < MAP_WIDTH && 0 <= next_y && next_y < MAP_HEIGHT {
-            if !map[next_x as usize][next_y as usize].blocked {
+            if map[next_x as usize][next_y as usize].is_walkable {
                 self.x += dx;
                 self.y += dy;
             }
@@ -72,17 +72,14 @@ const FOV_ALGO: FovAlgorithm = FovAlgorithm::Basic;
 const FOV_LIGHT_WALLS: bool = true;
 const TORCH_RADIUS: i32 = 10;
 
-fn color_blend(x1: i32, y1: i32, x2: i32, y2:i32, close: Color, far: Color, max_radius: i32) -> Color {
+fn light_blend(x1: i32, y1: i32, x2: i32, y2:i32, close: Color, far: Color, max_radius: f32) -> Color {
     let dx = (max(x1, x2) - min(x1, x2)) as f32;
     let dy = (max(y1, y2) - min(y1, y2)) as f32;
-    // adjacent squares should have max brighness
-    // squares at maximum visible distance should have min brightness.
-    let gradient = (close - far) / max_radius as f32;
-    close - gradient * (dx * dx + dy * dy).sqrt()
-}
 
-fn light_ground(x1: i32, y1: i32, x2: i32, y2:i32) -> Color {
-    color_blend(x1, y1, x2, y2, COLOR_LIGHT_GROUND, COLOR_DARK_GROUND, TORCH_RADIUS)
+    let f = (dx * dx + dy * dy) / (max_radius * max_radius);
+    // adjacent squares (f ~= 0) should be the close color
+    // squares at maximum visible distance (f ~= 1) should be the far color
+    close * (1. - f) + far * f
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -110,34 +107,30 @@ impl Rect {
 
 #[derive(Clone, Copy, Debug)]
 struct Tile {
-    blocked: bool,
-    block_sight: bool,
+    is_walkable: bool,
+    is_transparent: bool,
     explored: bool,
 }
 
 impl Tile {
     pub fn empty() -> Self {
-        Tile {blocked: false, block_sight: false, explored: false}
+        Tile::new(true, true)
     }
 
     pub fn wall() -> Self {
-        Tile {blocked: true, block_sight: true, explored: false}
+        Tile::new(false, false)
     }
 
-    pub fn new(blocked: bool, block_sight: bool) -> Self {
+    pub fn new(is_walkable: bool, is_transparent: bool) -> Self {
         Tile {
-            blocked: blocked,
-            block_sight: block_sight,
+            is_walkable: is_walkable,
+            is_transparent: is_transparent,
             explored: false,
         }
     }
 }
 
 type Map = Vec<Vec<Tile>>;
-
-fn is_blocked(map: &Map, x: i32, y:i32) -> bool {
-    map[x as usize][y as usize].blocked
-}
 
 fn make_room(room: Rect, map: &mut Map) {
     for x in (room.x1+1) .. room.x2 {
@@ -238,16 +231,16 @@ fn render_all(root: &mut Root, con: &mut Offscreen, objects: &[Object], map: &mu
             for y in 0..MAP_HEIGHT {
                 let uy = y as usize;
                 let visible = fov_map.is_in_fov(x, y);
-                let wall = map[ux][uy].block_sight;
+                let wall = !map[ux][uy].is_transparent;
                 let color = match (visible, wall) {
                     (false, true) => COLOR_DARK_WALL,
                     (false, false) => COLOR_DARK_GROUND,
                     (true, true) =>
-                        color_blend(player.x, player.y, x, y,
-                                    COLOR_LIGHT_WALL, COLOR_DARK_WALL, TORCH_RADIUS),
+                        light_blend(player.x, player.y, x, y,
+                                    COLOR_LIGHT_WALL, COLOR_DARK_WALL, TORCH_RADIUS as f32),
                     (true, false) =>
-                        color_blend(player.x, player.y, x, y,
-                                    COLOR_LIGHT_GROUND, COLOR_DARK_GROUND, TORCH_RADIUS),
+                        light_blend(player.x, player.y, x, y,
+                                    COLOR_LIGHT_GROUND, COLOR_DARK_GROUND, TORCH_RADIUS as f32),
                 };
                 let explored = &mut map[ux][uy].explored;
                 if visible {
@@ -285,8 +278,8 @@ fn main() {
     for x in 0..MAP_WIDTH {
         for y in 0..MAP_HEIGHT {
             fov_map.set(x, y,
-                        !map[x as usize][y as usize].block_sight,
-                        !map[x as usize][y as usize].blocked);
+                        map[x as usize][y as usize].is_transparent,
+                        map[x as usize][y as usize].is_walkable);
         }
     }
 
