@@ -11,12 +11,17 @@ use rand::Rng;
 use std::cmp::max;
 use std::cmp::min;
 
+const PLAYER: usize = 0;
+
 #[derive(Debug)]
 struct Object {
     x: i32,
     y: i32,
     char: char,
     color: Color,
+    name: String,
+    is_walkable: bool,
+    is_alive: bool,
 }
 
 impl Object {
@@ -26,6 +31,9 @@ impl Object {
             y: y,
             char: char,
             color: color,
+            name: "".to_string(),
+            is_walkable: false,
+            is_alive: true,
         }
     }
 
@@ -39,6 +47,15 @@ impl Object {
                 self.y += dy;
             }
         }
+    }
+
+    pub fn pos(&self) -> (i32, i32) {
+        (self.x, self.y)
+    }
+
+    pub fn set_pos(&mut self, x: i32, y: i32) {
+        self.x = x;
+        self.y = y;
     }
 
     pub fn draw(&self, con: &mut Console) {
@@ -62,6 +79,7 @@ const MAX_ROOM_WIDTH: i32 = 15;
 const MIN_ROOM_WIDTH: i32 = 6;
 const MAX_ROOM_HEIGHT: i32 = 10;
 const MIN_ROOM_HEIGHT: i32 = 5;
+const MAX_ROOM_MONSTERS: i32 = 3;
 
 const COLOR_DARK_WALL: Color = Color { r: 0, g: 0, b: 100 };
 const COLOR_LIGHT_WALL: Color = Color {
@@ -176,7 +194,25 @@ fn make_v_tunnel(y1: i32, y2: i32, x: i32, map: &mut Map) {
     }
 }
 
-fn make_map() -> (Map, (i32, i32)) {
+fn place_objects(room: Rect, objects: &mut Vec<Object>) {
+    let mut rng = rand::thread_rng();
+    let num_monsters = rng.gen_range(0, MAX_ROOM_MONSTERS + 1);
+    for _ in 0..num_monsters {
+        let x = rng.gen_range(room.x1 + 1, room.x2);
+        let y = rng.gen_range(room.y1 + 1, room.y2);
+
+        let mut monster = if rand::random::<f32>() < 0.8 {
+            // Create an orc
+            Object::new(x, y, 'o', colors::DESATURATED_GREEN)
+        } else {
+            Object::new(x, y, 'T', colors::DARKER_RED)
+        };
+
+        objects.push(monster);
+    }
+}
+
+fn make_map(objects: &mut Vec<Object>) -> (Map, (i32, i32)) {
     let mut map = vec![vec![Tile::wall(); MAP_HEIGHT as usize]; MAP_WIDTH as usize];
     let mut rng = rand::thread_rng();
     let mut rooms = vec![];
@@ -199,6 +235,7 @@ fn make_map() -> (Map, (i32, i32)) {
             .any(|other_room| room_rect.intersects_with(other_room));
         if !blocked {
             make_room(room_rect, &mut map);
+            place_objects(room_rect, objects);
             let (new_x, new_y) = room_rect.center();
             if rooms.is_empty() {
                 starting_position = (new_x, new_y)
@@ -262,8 +299,9 @@ fn render_all(
     recompute_fov: bool,
 ) {
     if recompute_fov {
-        let player = &objects[0];
+        let player = &objects[PLAYER];
         fov_map.compute_fov(player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
+        con.set_default_foreground(colors::WHITE);
 
         for x in 0..MAP_WIDTH {
             let ux = x as usize;
@@ -323,7 +361,11 @@ fn main() {
         .init();
 
     let mut con = Offscreen::new(MAP_WIDTH, MAP_HEIGHT);
-    let (mut map, (px, py)) = make_map();
+
+    let player = Object::new(0, 0, '@', colors::WHITE);
+    let mut objects = vec![player];
+    let (mut map, (px, py)) = make_map(&mut objects);
+    objects[PLAYER].set_pos(px, py);
 
     let mut fov_map = FovMap::new(MAP_WIDTH, MAP_HEIGHT);
     for x in 0..MAP_WIDTH {
@@ -337,15 +379,11 @@ fn main() {
         }
     }
 
-    let player = Object::new(px, py, '@', colors::WHITE);
-    let npc = Object::new(SCREEN_WIDTH / 2 - 5, SCREEN_HEIGHT / 2, '@', colors::WHITE);
-    let mut objects = [player, npc];
-
     tcod::system::set_fps(LIMIT_FPS);
 
     let mut previous_pos = (-1, -1);
     while !root.window_closed() {
-        let recompute_fov = previous_pos != (objects[0].x, objects[0].y);
+        let recompute_fov = previous_pos != (objects[PLAYER].x, objects[PLAYER].y);
         render_all(
             &mut root,
             &mut con,
@@ -360,8 +398,8 @@ fn main() {
             object.clear(&mut con);
         }
 
-        previous_pos = (objects[0].x, objects[0].y);
-        if handle_keys(&mut root, &mut objects[0], &map) {
+        previous_pos = (objects[PLAYER].x, objects[PLAYER].y);
+        if handle_keys(&mut root, &mut objects[PLAYER], &map) {
             break;
         }
     }
