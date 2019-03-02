@@ -19,6 +19,50 @@ enum PlayerAction {
     DidntTakeTurn,
     Exit,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Fighter {
+    max_hp: i32,
+    hp: i32,
+    defense: i32,
+    attack: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Ai;
+
+fn normalize(delta: i32) -> i32 {
+    if delta < 0 {
+        -1
+    } else if delta > 0 {
+        1
+    } else {
+        0
+    }
+}
+
+fn move_towards(id: usize, target_x: i32, target_y: i32, map: &MapSlice, objects: &mut [Object]) {
+    let dx = normalize(target_x - objects[id].x);
+    let dy = normalize(target_y - objects[id].y);
+    if move_by(id, dx, dy, map, objects) == PlayerAction::DidntTakeTurn
+        && move_by(id, dx, 0, map, objects) == PlayerAction::DidntTakeTurn
+    {
+        move_by(id, 0, dy, map, objects);
+    }
+}
+
+fn ai_take_turn(id: usize, map: &MapSlice, objects: &mut [Object], fov_map: &FovMap) {
+    let (x, y) = objects[id].pos();
+    if fov_map.is_in_fov(x, y) {
+        if objects[id].grid_distance_to(&objects[PLAYER]) > 1 {
+            let (player_x, player_y) = objects[PLAYER].pos();
+            move_towards(id, player_x, player_y, map, objects);
+        } else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
+            println!("The {} spits on your shiny armor!", objects[id].name);
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Object {
     x: i32,
@@ -26,6 +70,8 @@ struct Object {
     char: char,
     color: Color,
     name: String,
+    fighter: Option<Fighter>,
+    ai: Option<Ai>,
     is_walkable: bool,
     is_alive: bool,
 }
@@ -38,6 +84,8 @@ impl Object {
             char: char,
             color: color,
             name: name.to_string(),
+            fighter: None,
+            ai: None,
             is_walkable: false,
             is_alive: true,
         }
@@ -55,6 +103,12 @@ impl Object {
     pub fn draw(&self, con: &mut Console) {
         con.set_default_foreground(self.color);
         con.put_char(self.x, self.y, self.char, BackgroundFlag::None);
+    }
+
+    fn grid_distance_to(&self, other: &Object) -> i32 {
+        let dx = (other.x - self.x).abs();
+        let dy = (other.y - self.y).abs();
+        max(dx, dy)
     }
 
     /*
@@ -251,9 +305,25 @@ fn place_objects(room: Rect, objects: &mut Vec<Object>) {
 
         let mut monster = if rand::random::<f32>() < 0.8 {
             // Create an orc
-            Object::new(x, y, 'o', "orc", colors::DESATURATED_GREEN)
+            let mut orc = Object::new(x, y, 'o', "orc", colors::DESATURATED_GREEN);
+            orc.fighter = Some(Fighter {
+                max_hp: 10,
+                hp: 10,
+                defense: 0,
+                attack: 3,
+            });
+            orc.ai = Some(Ai);
+            orc
         } else {
-            Object::new(x, y, 'T', "troll", colors::DARKER_RED)
+            let mut troll = Object::new(x, y, 'T', "troll", colors::DARKER_RED);
+            troll.fighter = Some(Fighter {
+                max_hp: 16,
+                hp: 16,
+                defense: 1,
+                attack: 4,
+            });
+            troll.ai = Some(Ai);
+            troll
         };
 
         objects.push(monster);
@@ -413,7 +483,14 @@ fn main() {
 
     let mut con = Offscreen::new(MAP_WIDTH, MAP_HEIGHT);
 
-    let player = Object::new(0, 0, '@', "Player", colors::WHITE);
+    let mut player = Object::new(0, 0, '@', "Player", colors::WHITE);
+    player.fighter = Some(Fighter {
+        max_hp: 30,
+        hp: 30,
+        defense: 2,
+        attack: 5,
+    });
+
     let mut objects = vec![player];
     let (mut map, (px, py)) = make_map(&mut objects);
     objects[PLAYER].set_pos(px, py);
@@ -461,10 +538,12 @@ fn main() {
 
         // Let monsters take their turn
         if objects[PLAYER].is_alive && player_action != PlayerAction::DidntTakeTurn {
-            for object in &objects[PLAYER + 1..] {
-                if object.is_alive {
-                    // println!("The {} growls!", object.name);
+            for id in 0..objects.len() {
+                if objects[id].is_alive {
                     print!(".");
+                    if objects[id].ai.is_some() {
+                        ai_take_turn(id, &map, &mut objects, &fov_map);
+                    }
                 }
             }
             println!("");
