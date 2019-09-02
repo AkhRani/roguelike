@@ -54,11 +54,23 @@ fn move_towards(id: usize, target_x: i32, target_y: i32, map: &MapSlice, objects
 fn ai_take_turn(id: usize, map: &MapSlice, objects: &mut [Object], fov_map: &FovMap) {
     let (x, y) = objects[id].pos();
     if fov_map.is_in_fov(x, y) {
+        /*
+        let (player_slice, ai_slice) = objects.split_at_mut(id);
+        let player = &player_slice[0];
+        let ai = &ai_slice[0];
+        if ai.grid_distance_to(player) > 1 {
+            let (px, py) = player.pos();
+            move_towards(0, px, py, map, ai_slice);
+        } else {
+
+        }
+        */
         if objects[id].grid_distance_to(&objects[PLAYER]) > 1 {
             let (player_x, player_y) = objects[PLAYER].pos();
             move_towards(id, player_x, player_y, map, objects);
         } else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
-            println!("The {} spits on your shiny armor!", objects[id].name);
+            let (player_slice, ai_slice) = objects.split_at_mut(id);
+            ai_slice[0].attack(&mut player_slice[0]);
         }
     }
 }
@@ -98,6 +110,29 @@ impl Object {
     pub fn set_pos(&mut self, x: i32, y: i32) {
         self.x = x;
         self.y = y;
+    }
+
+    pub fn take_damage(&mut self, damage: i32) {
+        if let Some(fighter) = self.fighter.as_mut() {
+            if damage > 0 {
+                if damage >= fighter.hp {
+                    fighter.hp = 0;
+                    println!("The {} dies!", self.name);
+                } else {
+                    fighter.hp -= damage;
+                }
+            }
+        }
+    }
+
+    pub fn attack(&self, other: &mut Object) {
+        let damage = self.fighter.map_or(0, |f| f.attack) - other.fighter.map_or(0, |f| f.defense);
+        if damage > 0 {
+            println!("{} attacks {} for {} damage", self.name, other.name, damage);
+            other.take_damage(damage);
+        } else {
+            println!("{} attacks {} but it has no effect!", self.name, other.name);
+        }
     }
 
     pub fn draw(&self, con: &mut Console) {
@@ -266,7 +301,9 @@ fn player_move_or_attack(dx: i32, dy: i32, map: &MapSlice, objects: &mut [Object
 
     match target_id {
         Some(target_id) => {
-            println!("The {} says 'Stop poking me!!!'", objects[target_id].name);
+            let (player_slice, target_slice) = objects.split_at_mut(target_id);
+            player_slice[0].attack(&mut target_slice[0]);
+            // println!("The {} says 'Stop poking me!!!'", objects[target_id].name);
             PlayerAction::TookTurn
         }
         None => move_by(PLAYER, dx, dy, map, objects),
@@ -471,6 +508,16 @@ fn render_all(
     }
 
     blit(con, (0, 0), (MAP_WIDTH, MAP_HEIGHT), root, (0, 0), 1.0, 1.0);
+    // show the player's stats
+    if let Some(fighter) = objects[PLAYER].fighter {
+        root.print_ex(
+            1,
+            SCREEN_HEIGHT - 2,
+            BackgroundFlag::None,
+            TextAlignment::Left,
+            format!("HP: {}/{} ", fighter.hp, fighter.max_hp),
+        );
+    }
 }
 
 fn main() {
