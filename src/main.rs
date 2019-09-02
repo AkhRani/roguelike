@@ -26,6 +26,41 @@ struct Fighter {
     hp: i32,
     defense: i32,
     attack: i32,
+    on_death: DeathCallback,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum DeathCallback {
+    Player,
+    Monster,
+}
+
+impl DeathCallback {
+    fn callback(self, object: &mut Object) {
+        use DeathCallback::*;
+        let callback: fn(&mut Object) = match self {
+            Player => player_death,
+            Monster => monster_death,
+        };
+        callback(object);
+    }
+}
+
+fn player_death(player: &mut Object) {
+    println!("You died!");
+
+    player.char = '%';
+    player.color = colors::DARK_RED;
+}
+
+fn monster_death(monster: &mut Object) {
+    println!("{} is dead!", monster.name);
+    monster.char = '%';
+    monster.color = colors::DARK_RED;
+    monster.is_walkable = true;
+    monster.fighter = None;
+    monster.ai = None;
+    monster.name = format!("remains of {}", monster.name);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -52,6 +87,7 @@ fn move_towards(id: usize, target_x: i32, target_y: i32, map: &MapSlice, objects
 }
 
 fn ai_take_turn(id: usize, map: &MapSlice, objects: &mut [Object], fov_map: &FovMap) {
+    assert_ne!(id, PLAYER);
     let (x, y) = objects[id].pos();
     if fov_map.is_in_fov(x, y) {
         /*
@@ -69,6 +105,7 @@ fn ai_take_turn(id: usize, map: &MapSlice, objects: &mut [Object], fov_map: &Fov
             let (player_x, player_y) = objects[PLAYER].pos();
             move_towards(id, player_x, player_y, map, objects);
         } else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
+            // TODO: if objects[PLAYER].fighter.hp > 0 {
             let (player_slice, ai_slice) = objects.split_at_mut(id);
             ai_slice[0].attack(&mut player_slice[0]);
         }
@@ -91,10 +128,10 @@ struct Object {
 impl Object {
     pub fn new(x: i32, y: i32, char: char, name: &str, color: Color) -> Self {
         Object {
-            x: x,
-            y: y,
-            char: char,
-            color: color,
+            x,
+            y,
+            char,
+            color,
             name: name.to_string(),
             fighter: None,
             ai: None,
@@ -117,10 +154,16 @@ impl Object {
             if damage > 0 {
                 if damage >= fighter.hp {
                     fighter.hp = 0;
-                    println!("The {} dies!", self.name);
                 } else {
                     fighter.hp -= damage;
                 }
+            }
+        }
+        // Second block to avoid double-mut-borrow
+        if let Some(fighter) = self.fighter {
+            if fighter.hp <= 0 {
+                self.is_alive = false;
+                fighter.on_death.callback(self);
             }
         }
     }
@@ -135,7 +178,7 @@ impl Object {
         }
     }
 
-    pub fn draw(&self, con: &mut Console) {
+    pub fn draw(&self, con: &mut dyn Console) {
         con.set_default_foreground(self.color);
         con.put_char(self.x, self.y, self.char, BackgroundFlag::None);
     }
@@ -167,21 +210,9 @@ const MIN_ROOM_HEIGHT: i32 = 5;
 const MAX_ROOM_MONSTERS: i32 = 3;
 
 const COLOR_DARK_WALL: Color = Color { r: 0, g: 0, b: 100 };
-const COLOR_LIGHT_WALL: Color = Color {
-    r: 130,
-    g: 110,
-    b: 50,
-};
-const COLOR_DARK_GROUND: Color = Color {
-    r: 50,
-    g: 50,
-    b: 150,
-};
-const COLOR_LIGHT_GROUND: Color = Color {
-    r: 200,
-    g: 180,
-    b: 50,
-};
+const COLOR_LIGHT_WALL: Color = Color { r: 130, g: 110, b: 50 };
+const COLOR_DARK_GROUND: Color = Color { r: 50, g: 50, b: 150 };
+const COLOR_LIGHT_GROUND: Color = Color { r: 200, g: 180, b: 50 };
 
 const FOV_ALGO: FovAlgorithm = FovAlgorithm::Basic;
 const FOV_LIGHT_WALLS: bool = true;
@@ -215,12 +246,7 @@ struct Rect {
 
 impl Rect {
     pub fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
-        Rect {
-            x1: x,
-            y1: y,
-            x2: x + w,
-            y2: y + h,
-        }
+        Rect { x1: x, y1: y, x2: x + w, y2: y + h }
     }
 
     pub fn center(&self) -> (i32, i32) {
@@ -249,11 +275,7 @@ impl Tile {
     }
 
     pub fn new(is_walkable: bool, is_transparent: bool) -> Self {
-        Tile {
-            is_walkable: is_walkable,
-            is_transparent: is_transparent,
-            explored: false,
-        }
+        Tile { is_walkable, is_transparent, explored: false }
     }
 }
 
@@ -261,9 +283,7 @@ type Map = Vec<Vec<Tile>>;
 type MapSlice = [Vec<Tile>];
 
 fn is_blocked_by_object(x: i32, y: i32, objects: &[Object]) -> bool {
-    objects
-        .iter()
-        .any(|object| !object.is_walkable && object.pos() == (x, y))
+    objects.iter().any(|object| !object.is_walkable && object.pos() == (x, y))
 }
 
 fn is_blocked(map: &MapSlice, x: i32, y: i32, objects: &[Object]) -> bool {
@@ -297,13 +317,12 @@ fn player_move_or_attack(dx: i32, dy: i32, map: &MapSlice, objects: &mut [Object
 
     let target_id = objects
         .iter()
-        .position(|object| object.pos() == (next_x, next_y));
+        .position(|object| object.pos() == (next_x, next_y) && object.fighter != None);
 
     match target_id {
         Some(target_id) => {
             let (player_slice, target_slice) = objects.split_at_mut(target_id);
             player_slice[0].attack(&mut target_slice[0]);
-            // println!("The {} says 'Stop poking me!!!'", objects[target_id].name);
             PlayerAction::TookTurn
         }
         None => move_by(PLAYER, dx, dy, map, objects),
@@ -340,7 +359,7 @@ fn place_objects(room: Rect, objects: &mut Vec<Object>) {
             continue;
         }
 
-        let mut monster = if rand::random::<f32>() < 0.8 {
+        let monster = if rand::random::<f32>() < 0.8 {
             // Create an orc
             let mut orc = Object::new(x, y, 'o', "orc", colors::DESATURATED_GREEN);
             orc.fighter = Some(Fighter {
@@ -348,6 +367,7 @@ fn place_objects(room: Rect, objects: &mut Vec<Object>) {
                 hp: 10,
                 defense: 0,
                 attack: 3,
+                on_death: DeathCallback::Monster,
             });
             orc.ai = Some(Ai);
             orc
@@ -358,6 +378,7 @@ fn place_objects(room: Rect, objects: &mut Vec<Object>) {
                 hp: 16,
                 defense: 1,
                 attack: 4,
+                on_death: DeathCallback::Monster,
             });
             troll.ai = Some(Ai);
             troll
@@ -378,16 +399,10 @@ fn make_map(objects: &mut Vec<Object>) -> (Map, (i32, i32)) {
     for _ in 0..MAX_ROOMS {
         let w = rng.gen_range(MIN_ROOM_WIDTH, MAX_ROOM_WIDTH);
         let h = rng.gen_range(MIN_ROOM_HEIGHT, MAX_ROOM_HEIGHT);
-        let room_rect = Rect::new(
-            rng.gen_range(0, MAP_WIDTH - w),
-            rng.gen_range(0, MAP_HEIGHT - h),
-            w,
-            h,
-        );
+        let room_rect =
+            Rect::new(rng.gen_range(0, MAP_WIDTH - w), rng.gen_range(0, MAP_HEIGHT - h), w, h);
 
-        let blocked = rooms
-            .iter()
-            .any(|other_room| room_rect.intersects_with(other_room));
+        let blocked = rooms.iter().any(|other_room| room_rect.intersects_with(other_room));
         if !blocked {
             make_room(room_rect, &mut map);
             place_objects(room_rect, objects);
@@ -424,25 +439,30 @@ fn handle_keys(root: &mut Root, objects: &mut [Object], map: &MapSlice) -> Playe
     let key = root.wait_for_keypress(true);
     let player_alive = objects[PLAYER].is_alive;
     match (key, player_alive) {
-        (
-            Key {
-                code: Enter,
-                alt: true,
-                ..
-            },
-            _,
-        ) => {
+        (Key { code: Enter, alt: true, .. }, _) => {
             let fullscreen = root.is_fullscreen();
             root.set_fullscreen(!fullscreen);
             DidntTakeTurn
         }
         (Key { code: Escape, .. }, _) => Exit,
 
-        // Movement Keys
+        // Arrow Movement Keys
         (Key { code: Up, .. }, true) => player_move_or_attack(0, -1, map, objects),
         (Key { code: Down, .. }, true) => player_move_or_attack(0, 1, map, objects),
         (Key { code: Left, .. }, true) => player_move_or_attack(-1, 0, map, objects),
         (Key { code: Right, .. }, true) => player_move_or_attack(1, 0, map, objects),
+
+        // vi-style cardinal movement keys
+        (Key { printable: 'k', .. }, true) => player_move_or_attack(0, -1, map, objects),
+        (Key { printable: 'j', .. }, true) => player_move_or_attack(0, 1, map, objects),
+        (Key { printable: 'h', .. }, true) => player_move_or_attack(-1, 0, map, objects),
+        (Key { printable: 'l', .. }, true) => player_move_or_attack(1, 0, map, objects),
+
+        // not-really-vi-style diagonal movement keys
+        (Key { printable: 'y', .. }, true) => player_move_or_attack(-1, -1, map, objects),
+        (Key { printable: 'u', .. }, true) => player_move_or_attack(1, -1, map, objects),
+        (Key { printable: 'b', .. }, true) => player_move_or_attack(-1, 1, map, objects),
+        (Key { printable: 'n', .. }, true) => player_move_or_attack(1, 1, map, objects),
 
         _ => DidntTakeTurn,
     }
@@ -501,8 +521,15 @@ fn render_all(
         }
     }
 
+    // Draw "background" objects first
     for object in objects {
-        if fov_map.is_in_fov(object.x, object.y) {
+        if fov_map.is_in_fov(object.x, object.y) && object.is_walkable {
+            object.draw(con);
+        }
+    }
+    // Then "foreground" objects
+    for object in objects {
+        if fov_map.is_in_fov(object.x, object.y) && !object.is_walkable {
             object.draw(con);
         }
     }
@@ -536,6 +563,7 @@ fn main() {
         hp: 30,
         defense: 2,
         attack: 5,
+        on_death: DeathCallback::Player,
     });
 
     let mut objects = vec![player];
@@ -567,14 +595,7 @@ fn main() {
         */
 
         let recompute_fov = previous_pos != (objects[PLAYER].x, objects[PLAYER].y);
-        render_all(
-            &mut root,
-            &mut con,
-            &objects,
-            &mut map,
-            &mut fov_map,
-            recompute_fov,
-        );
+        render_all(&mut root, &mut con, &objects, &mut map, &mut fov_map, recompute_fov);
         root.flush();
 
         previous_pos = (objects[PLAYER].x, objects[PLAYER].y);
@@ -587,13 +608,11 @@ fn main() {
         if objects[PLAYER].is_alive && player_action != PlayerAction::DidntTakeTurn {
             for id in 0..objects.len() {
                 if objects[id].is_alive {
-                    print!(".");
                     if objects[id].ai.is_some() {
                         ai_take_turn(id, &map, &mut objects, &fov_map);
                     }
                 }
             }
-            println!("");
         }
     }
 }
