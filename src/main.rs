@@ -84,29 +84,15 @@ fn move_towards(id: usize, target_x: i32, target_y: i32, map: &MapSlice, objects
     }
 }
 
-fn ai_take_turn(id: usize, map: &MapSlice, objects: &mut [Object], fov_map: &FovMap) {
+fn ai_take_turn(id: usize, map: &MapSlice, objects: &mut [Object]) {
     assert_ne!(id, PLAYER);
-    let (x, y) = objects[id].pos();
-    if fov_map.is_in_fov(x, y) {
-        /*
+    if objects[id].grid_distance_to(&objects[PLAYER]) > 1 {
+        let (player_x, player_y) = objects[PLAYER].pos();
+        move_towards(id, player_x, player_y, map, objects);
+    } else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
+        // TODO: if objects[PLAYER].fighter.hp > 0 {
         let (player_slice, ai_slice) = objects.split_at_mut(id);
-        let player = &player_slice[0];
-        let ai = &ai_slice[0];
-        if ai.grid_distance_to(player) > 1 {
-            let (px, py) = player.pos();
-            move_towards(0, px, py, map, ai_slice);
-        } else {
-
-        }
-        */
-        if objects[id].grid_distance_to(&objects[PLAYER]) > 1 {
-            let (player_x, player_y) = objects[PLAYER].pos();
-            move_towards(id, player_x, player_y, map, objects);
-        } else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
-            // TODO: if objects[PLAYER].fighter.hp > 0 {
-            let (player_slice, ai_slice) = objects.split_at_mut(id);
-            ai_slice[0].attack(&mut player_slice[0]);
-        }
+        ai_slice[0].attack(&mut player_slice[0]);
     }
 }
 
@@ -534,7 +520,7 @@ fn render_all(tcod: &mut Tcod, objects: &[Object], map: &mut Map, recompute_fov:
 
     // Draw "background" objects first
     for object in objects {
-        if tcod.fov.is_in_fov(object.x, object.y) && object.is_walkable {
+        if map[object.x as usize][object.y as usize].explored && object.is_walkable {
             object.draw(&mut tcod.con);
         }
     }
@@ -628,36 +614,34 @@ fn main() {
 
     tcod::system::set_fps(LIMIT_FPS);
 
+    render_all(&mut tcod, &objects, &mut map, true);
+    tcod.root.flush();
+
     let mut previous_pos = (-1, -1);
     while !tcod.root.window_closed() {
-        let recompute_fov = previous_pos != (objects[PLAYER].x, objects[PLAYER].y);
-        render_all(&mut tcod, &objects, &mut map, recompute_fov);
-        tcod.root.flush();
-
         previous_pos = (objects[PLAYER].x, objects[PLAYER].y);
         let player_action = handle_keys(&mut tcod.root, &mut objects, &map);
         if player_action == PlayerAction::Exit {
             break;
         }
-
-        /* The floor won't be re-drawn for non-visible tiles, but this loop
-        doesn't take visibility into account.  Therefore non-visible floor tiles
-        containing monsters or items are blanked out */
-        /* Needed when monsters move but player doesn't, but blanks out floor
-        characters for non-visible objects */
-        for object in &mut objects {
-            if tcod.fov.is_in_fov(object.x, object.y) {
-                object.clear(&mut tcod.con);
-            }
+        let recompute_fov = previous_pos != (objects[PLAYER].x, objects[PLAYER].y);
+        if recompute_fov {
+            objects[PLAYER].clear(&mut tcod.con);
         }
 
         // Let monsters take their turn
         if objects[PLAYER].is_alive && player_action != PlayerAction::DidntTakeTurn {
             for id in 0..objects.len() {
-                if objects[id].is_alive & objects[id].ai.is_some() {
-                    ai_take_turn(id, &map, &mut objects, &tcod.fov);
+                let ob = &objects[id];
+                let (x, y) = ob.pos();
+                if ob.is_alive && ob.ai.is_some() && tcod.fov.is_in_fov(x, y) {
+                    ob.clear(&mut tcod.con);
+                    ai_take_turn(id, &map, &mut objects);
                 }
             }
         }
+
+        render_all(&mut tcod, &objects, &mut map, recompute_fov);
+        tcod.root.flush();
     }
 }
