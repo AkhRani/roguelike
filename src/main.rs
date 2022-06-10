@@ -1,9 +1,12 @@
 extern crate tcod;
 
-use tcod::colors;
+use tcod::{colors, input};
 use tcod::colors::Color;
 use tcod::console::*;
 use tcod::map::{FovAlgorithm, Map as FovMap};
+use tcod::input::Key;
+use tcod::input::Mouse;
+use tcod::input::Event;
 
 extern crate rand;
 use rand::Rng;
@@ -446,17 +449,15 @@ const SCREEN_WIDTH: i32 = 80;
 const SCREEN_HEIGHT: i32 = 50;
 const LIMIT_FPS: i32 = 20;
 
-fn handle_keys(root: &mut Root, objects: &mut [Object], game: &mut Game) -> PlayerAction {
-    use tcod::input::Key;
+fn handle_keys(tcod: &mut Tcod, objects: &mut [Object], game: &mut Game) -> PlayerAction {
     use tcod::input::KeyCode::*;
     use PlayerAction::*;
 
-    let key = root.wait_for_keypress(true);
     let player_alive = objects[PLAYER].is_alive;
-    match (key, player_alive) {
+    match (tcod.key, player_alive) {
         (Key { code: Enter, alt: true, .. }, _) => {
-            let fullscreen = root.is_fullscreen();
-            root.set_fullscreen(!fullscreen);
+            let fullscreen = tcod.root.is_fullscreen();
+            tcod.root.set_fullscreen(!fullscreen);
             DidntTakeTurn
         }
         (Key { code: Escape, .. }, _) => Exit,
@@ -619,6 +620,8 @@ struct Tcod {
     con: Offscreen,
     panel: Offscreen,
     fov: FovMap,
+    key: Key,
+    mouse: Mouse,
 }
 
 fn main() {
@@ -634,6 +637,8 @@ fn main() {
         con: Offscreen::new(MAP_WIDTH, MAP_HEIGHT),
         panel: Offscreen::new(SCREEN_WIDTH, SCREEN_HEIGHT),
         fov: FovMap::new(MAP_WIDTH, MAP_HEIGHT),
+        key: Default::default(),
+        mouse: Default::default(),
     };
 
     let mut player = Object::new(0, 0, '@', "Player", colors::WHITE);
@@ -670,8 +675,13 @@ fn main() {
     tcod.root.flush();
 
     while !tcod.root.window_closed() {
+        match input::check_for_event(input::MOUSE | input::KEY_PRESS) {
+            Some((_, Event::Mouse(m))) => tcod.mouse = m,
+            Some((_, Event::Key(k))) => tcod.key = k,
+            _ => tcod.key = Default::default(),
+        }
         let previous_pos = (objects[PLAYER].x, objects[PLAYER].y);
-        let player_action = handle_keys(&mut tcod.root, &mut objects, &mut game);
+        let player_action = handle_keys(&mut tcod, &mut objects, &mut game);
         if player_action == PlayerAction::Exit {
             break;
         }
