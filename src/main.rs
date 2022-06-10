@@ -107,6 +107,7 @@ struct Object {
     ai: Option<Ai>,
     is_walkable: bool,
     is_alive: bool,
+    was_seen: bool,
 }
 
 impl Object {
@@ -121,6 +122,7 @@ impl Object {
             ai: None,
             is_walkable: false,
             is_alive: true,
+            was_seen: false,
         }
     }
 
@@ -617,9 +619,8 @@ fn main() {
     render_all(&mut tcod, &objects, &mut map, true);
     tcod.root.flush();
 
-    let mut previous_pos = (-1, -1);
     while !tcod.root.window_closed() {
-        previous_pos = (objects[PLAYER].x, objects[PLAYER].y);
+        let previous_pos = (objects[PLAYER].x, objects[PLAYER].y);
         let player_action = handle_keys(&mut tcod.root, &mut objects, &map);
         if player_action == PlayerAction::Exit {
             break;
@@ -632,10 +633,16 @@ fn main() {
         // Let monsters take their turn
         if objects[PLAYER].is_alive && player_action != PlayerAction::DidntTakeTurn {
             for id in 0..objects.len() {
-                let ob = &objects[id];
-                let (x, y) = ob.pos();
-                if ob.is_alive && ob.ai.is_some() && tcod.fov.is_in_fov(x, y) {
+                let ob = &mut objects[id];
+                if !ob.was_seen {
+                    let (x, y) = ob.pos();
+                    if tcod.fov.is_in_fov(x, y) {
+                        ob.was_seen = true;
+                    }
+                }
+                if ob.is_alive && ob.ai.is_some() && ob.was_seen {
                     ob.clear(&mut tcod.con);
+                    // println!("{} is moving", ob.name);
                     ai_take_turn(id, &map, &mut objects);
                 }
             }
