@@ -1,12 +1,12 @@
 extern crate tcod;
 
-use tcod::{colors, input};
 use tcod::colors::Color;
 use tcod::console::*;
-use tcod::map::{FovAlgorithm, Map as FovMap};
+use tcod::input::Event;
 use tcod::input::Key;
 use tcod::input::Mouse;
-use tcod::input::Event;
+use tcod::map::{FovAlgorithm, Map as FovMap};
+use tcod::{colors, input};
 
 extern crate rand;
 use rand::Rng;
@@ -158,11 +158,14 @@ impl Object {
         if damage > 0 {
             game.messages.add(
                 format!("{} attacks {} for {} damage", self.name, other.name, damage),
-            colors::WHITE);
+                colors::WHITE,
+            );
             other.take_damage(damage, game);
         } else {
-            game.messages.add(format!("{} attacks {} but it has no effect!", self.name, other.name),
-            colors::WHITE);
+            game.messages.add(
+                format!("{} attacks {} but it has no effect!", self.name, other.name),
+                colors::WHITE,
+            );
         }
     }
 
@@ -328,7 +331,12 @@ fn move_by(id: usize, dx: i32, dy: i32, map: &MapSlice, objects: &mut [Object]) 
     PlayerAction::DidntTakeTurn
 }
 
-fn player_move_or_attack(dx: i32, dy: i32, game: &mut Game, objects: &mut [Object]) -> PlayerAction {
+fn player_move_or_attack(
+    dx: i32,
+    dy: i32,
+    game: &mut Game,
+    objects: &mut [Object],
+) -> PlayerAction {
     let (x, y) = objects[PLAYER].pos();
     let next_x = x + dx;
     let next_y = y + dy;
@@ -484,6 +492,23 @@ fn handle_keys(tcod: &mut Tcod, objects: &mut [Object], game: &mut Game) -> Play
     }
 }
 
+fn get_names_under_mouse(tcod: &Tcod, objects: &[Object]) -> String {
+    let (x, y) = (tcod.mouse.cx as i32, tcod.mouse.cy as i32);
+    if !(0..MAP_WIDTH).contains(&x) ||
+        !(0..MAP_HEIGHT).contains(&y)  ||
+        !tcod.fov.is_in_fov(x, y) {
+        return "".to_string();
+    }
+
+    let names = objects
+        .iter()
+        .filter(|ob| ob.pos() == (x, y))
+        .map(|ob| ob.name.clone())
+        .collect::<Vec<_>>();
+
+    names.join(", ")
+}
+
 fn render_bar(
     panel: &mut Offscreen,
     x: i32,
@@ -496,7 +521,7 @@ fn render_bar(
     back_color: Color,
 ) {
     let real_width = value as f32 / maximum as f32 * total_width as f32;
-    let bar_width =  real_width.ceil() as i32;
+    let bar_width = real_width.ceil() as i32;
 
     // render the background first
     panel.set_default_background(back_color);
@@ -587,6 +612,15 @@ fn render_all(tcod: &mut Tcod, objects: &[Object], game: &mut Game, recompute_fo
         colors::DARKER_RED,
     );
 
+    tcod.panel.set_default_background(colors::LIGHT_GREY);
+    tcod.panel.print_ex(
+        1,
+        0,
+        BackgroundFlag::None,
+        TextAlignment::Left,
+        get_names_under_mouse(tcod, objects),
+    );
+
     let mut y = MSG_HEIGHT as i32;
     for &(ref msg, color) in game.messages.iter().rev() {
         let msg_height = tcod.panel.get_height_rect(MSG_X, y, MSG_WIDTH, 0, msg);
@@ -612,7 +646,6 @@ fn render_all(tcod: &mut Tcod, objects: &[Object], game: &mut Game, recompute_fo
         );
     }
     */
-
 }
 
 struct Tcod {
@@ -652,10 +685,7 @@ fn main() {
 
     let mut objects = vec![player];
 
-    let mut game = Game {
-        map: make_map(&mut objects),
-        messages: Messages::new(),
-    };
+    let mut game = Game { map: make_map(&mut objects), messages: Messages::new() };
 
     for x in 0..MAP_WIDTH {
         for y in 0..MAP_HEIGHT {
