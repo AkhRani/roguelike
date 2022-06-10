@@ -407,7 +407,6 @@ fn make_map(objects: &mut Vec<Object>) -> Map {
     let mut map = vec![vec![Tile::wall(); MAP_HEIGHT as usize]; MAP_WIDTH as usize];
     let mut rng = rand::thread_rng();
     let mut rooms = vec![];
-    let mut starting_position = (0, 0);
     let mut prev_x = 0;
     let mut prev_y = 0;
 
@@ -489,7 +488,7 @@ fn render_bar(
     x: i32,
     y: i32,
     total_width: i32,
-    name: &str,
+    _name: &str,
     value: i32,
     maximum: i32,
     bar_color: Color,
@@ -509,47 +508,47 @@ fn render_bar(
 }
 
 fn render_all(tcod: &mut Tcod, objects: &[Object], game: &mut Game, recompute_fov: bool) {
+    let player = &objects[PLAYER];
     if recompute_fov {
-        let player = &objects[PLAYER];
         tcod.fov.compute_fov(player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
-        tcod.con.set_default_foreground(colors::WHITE);
+    }
 
-        for x in 0..MAP_WIDTH {
-            let ux = x as usize;
-            for y in 0..MAP_HEIGHT {
-                let uy = y as usize;
-                let visible = tcod.fov.is_in_fov(x, y);
-                let wall = !game.map[ux][uy].is_transparent;
-                let color = match (visible, wall) {
-                    (false, true) => COLOR_DARK_WALL,
-                    (false, false) => COLOR_DARK_GROUND,
-                    (true, true) => light_blend(
-                        player.x,
-                        player.y,
-                        x,
-                        y,
-                        COLOR_LIGHT_WALL,
-                        COLOR_DARK_WALL,
-                        TORCH_RADIUS as f32,
-                    ),
-                    (true, false) => light_blend(
-                        player.x,
-                        player.y,
-                        x,
-                        y,
-                        COLOR_LIGHT_GROUND,
-                        COLOR_DARK_GROUND,
-                        TORCH_RADIUS as f32,
-                    ),
-                };
-                let explored = &mut game.map[ux][uy].explored;
-                if visible {
-                    *explored = true;
-                }
-                if *explored {
-                    tcod.con.set_char_background(x, y, color, BackgroundFlag::Set);
-                    tcod.con.put_char(x, y, if wall { '#' } else { '.' }, BackgroundFlag::None);
-                }
+    tcod.con.set_default_foreground(colors::WHITE);
+    for x in 0..MAP_WIDTH {
+        let ux = x as usize;
+        for y in 0..MAP_HEIGHT {
+            let uy = y as usize;
+            let visible = tcod.fov.is_in_fov(x, y);
+            let wall = !game.map[ux][uy].is_transparent;
+            let color = match (visible, wall) {
+                (false, true) => COLOR_DARK_WALL,
+                (false, false) => COLOR_DARK_GROUND,
+                (true, true) => light_blend(
+                    player.x,
+                    player.y,
+                    x,
+                    y,
+                    COLOR_LIGHT_WALL,
+                    COLOR_DARK_WALL,
+                    TORCH_RADIUS as f32,
+                ),
+                (true, false) => light_blend(
+                    player.x,
+                    player.y,
+                    x,
+                    y,
+                    COLOR_LIGHT_GROUND,
+                    COLOR_DARK_GROUND,
+                    TORCH_RADIUS as f32,
+                ),
+            };
+            let explored = &mut game.map[ux][uy].explored;
+            if visible {
+                *explored = true;
+            }
+            if *explored {
+                tcod.con.set_char_background(x, y, color, BackgroundFlag::Set);
+                tcod.con.put_char(x, y, if wall { '#' } else { '.' }, BackgroundFlag::None);
             }
         }
     }
