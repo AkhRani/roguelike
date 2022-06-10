@@ -462,7 +462,8 @@ fn render_bar(
     bar_color: Color,
     back_color: Color,
 ) {
-    let bar_width = (value as f32 / maximum as f32 * total_width as f32) as i32;
+    let real_width = (value as f32 / maximum as f32 * total_width as f32);
+    let bar_width =  real_width.ceil() as i32;
 
     // render the background first
     panel.set_default_background(back_color);
@@ -534,17 +535,6 @@ fn render_all(tcod: &mut Tcod, objects: &[Object], map: &mut Map, recompute_fov:
     }
 
     blit(&tcod.con, (0, 0), (MAP_WIDTH, MAP_HEIGHT), &mut tcod.root, (0, 0), 1.0, 1.0);
-    // show the player's stats
-    if let Some(fighter) = objects[PLAYER].fighter {
-        tcod.root.print_ex(
-            1,
-            SCREEN_HEIGHT - 2,
-            BackgroundFlag::None,
-            TextAlignment::Left,
-            format!("HP: {}/{} ", fighter.hp, fighter.max_hp),
-        );
-    }
-
     // show the player's stats graphically
     tcod.panel.set_default_background(colors::BLACK);
     tcod.panel.clear();
@@ -566,6 +556,20 @@ fn render_all(tcod: &mut Tcod, objects: &[Object], map: &mut Map, recompute_fov:
 
     // blit the contents of `panel` to the root console
     blit(&tcod.panel, (0, 0), (SCREEN_WIDTH, PANEL_HEIGHT), &mut tcod.root, (0, PANEL_Y), 1.0, 1.0);
+
+    // show the player's stats
+    /*
+    if let Some(fighter) = objects[PLAYER].fighter {
+        tcod.root.print_ex(
+            1,
+            SCREEN_HEIGHT - 2,
+            BackgroundFlag::None,
+            TextAlignment::Left,
+            format!("HP: {}/{} ", fighter.hp, fighter.max_hp),
+        );
+    }
+    */
+
 }
 
 struct Tcod {
