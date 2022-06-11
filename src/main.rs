@@ -377,7 +377,7 @@ fn player_move_or_attack(
 fn player_pick_up(object_id: usize, game: &mut Game, objects: &mut Vec<Object>) {
     if game.inventory.len() >= 26 {
         game.messages.add("Inventory is full", colors::RED);
-        return
+        return;
     }
     let item = objects.swap_remove(object_id);
     game.messages.add(format!("You picked up a {}", item.name), colors::WHITE);
@@ -514,7 +514,7 @@ const SCREEN_HEIGHT: i32 = 50;
 const LIMIT_FPS: i32 = 20;
 
 fn show_list<U: AsRef<str>>(tcod: &mut Tcod, items: &[U]) -> Option<usize> {
-    let (w, h) = (SCREEN_WIDTH/2, SCREEN_HEIGHT/2);
+    let (w, h) = (SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
     let mut dialog = Offscreen::new(w, h);
 
     dialog.print_frame(0, 0, w, h, false, BackgroundFlag::Screen, Some("Inventory"));
@@ -523,9 +523,15 @@ fn show_list<U: AsRef<str>>(tcod: &mut Tcod, items: &[U]) -> Option<usize> {
         dialog.print(1, i as i32 + 1, format!("{}: {}", key, items[i].as_ref()));
     }
 
-    blit(&dialog, (0, 0), (w, h), &mut tcod.root, (w/2, h/2), 1.0, 1.0);
+    blit(&dialog, (0, 0), (w, h), &mut tcod.root, (w / 2, h / 2), 1.0, 1.0);
     tcod.root.flush();
-    tcod.root.wait_for_keypress(true);
+    let key = tcod.root.wait_for_keypress(true);
+    if key.printable >= 'a' {
+        let id = key.printable as usize - b'a' as usize;
+        if id < items.len() {
+            return Some(id);
+        }
+    }
     None
 }
 
@@ -574,9 +580,9 @@ fn handle_keys(tcod: &mut Tcod, objects: &mut Vec<Object>, game: &mut Game) -> P
         (Key { printable: 'b', .. }, true) => player_move_or_attack(-1, 1, game, objects),
         (Key { printable: 'n', .. }, true) => player_move_or_attack(1, 1, game, objects),
 
-        (Key { printable: '.', ..}, true) => player_pick_up_here(game, objects),
+        (Key { printable: '.', .. }, true) => player_pick_up_here(game, objects),
 
-        (Key { printable: 'i', ..}, true) => show_inventory(tcod, game),
+        (Key { printable: 'i', .. }, true) => show_inventory(tcod, game),
 
         _ => DidntTakeTurn,
     }
@@ -584,9 +590,7 @@ fn handle_keys(tcod: &mut Tcod, objects: &mut Vec<Object>, game: &mut Game) -> P
 
 fn get_names_under_mouse(tcod: &Tcod, objects: &[Object]) -> String {
     let (x, y) = (tcod.mouse.cx as i32, tcod.mouse.cy as i32);
-    if !(0..MAP_WIDTH).contains(&x) ||
-        !(0..MAP_HEIGHT).contains(&y)  ||
-        !tcod.fov.is_in_fov(x, y) {
+    if !(0..MAP_WIDTH).contains(&x) || !(0..MAP_HEIGHT).contains(&y) || !tcod.fov.is_in_fov(x, y) {
         return "".to_string();
     }
 
@@ -775,7 +779,8 @@ fn main() {
 
     let mut objects = vec![player];
 
-    let mut game = Game { map: make_map(&mut objects), messages: Messages::new(), inventory: vec![] };
+    let mut game =
+        Game { map: make_map(&mut objects), messages: Messages::new(), inventory: vec![] };
 
     for x in 0..MAP_WIDTH {
         for y in 0..MAP_HEIGHT {
