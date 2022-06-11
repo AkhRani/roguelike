@@ -392,7 +392,10 @@ fn player_pick_up_here(game: &mut Game, objects: &mut Vec<Object>) -> PlayerActi
             player_pick_up(id, game, objects);
             PlayerAction::TookTurn
         }
-        _ => PlayerAction::DidntTakeTurn
+        _ => {
+            game.messages.add("There is nothing here", colors::WHITE);
+            PlayerAction::DidntTakeTurn
+        }
     }
 }
 
@@ -510,6 +513,36 @@ const SCREEN_WIDTH: i32 = 80;
 const SCREEN_HEIGHT: i32 = 50;
 const LIMIT_FPS: i32 = 20;
 
+fn show_list<U: AsRef<str>>(tcod: &mut Tcod, items: &[U]) -> Option<usize> {
+    let (w, h) = (SCREEN_WIDTH/2, SCREEN_HEIGHT/2);
+    let mut dialog = Offscreen::new(w, h);
+
+    dialog.print_frame(0, 0, w, h, false, BackgroundFlag::Screen, Some("Inventory"));
+    for i in 0..items.len() {
+        let key = (b'a' + i as u8) as char;
+        dialog.print(1, i as i32 + 1, format!("{}: {}", key, items[i].as_ref()));
+    }
+
+    blit(&dialog, (0, 0), (w, h), &mut tcod.root, (w/2, h/2), 1.0, 1.0);
+    tcod.root.flush();
+    tcod.root.wait_for_keypress(true);
+    None
+}
+
+fn show_inventory(tcod: &mut Tcod, game: &mut Game) -> PlayerAction {
+    let inv_names: Vec<String> = game.inventory.iter().map(|ob| ob.name.clone()).collect();
+    match show_list(tcod, &inv_names) {
+        Some(id) => {
+            game.messages.add(format!("You picked {}", id), colors::WHITE);
+            PlayerAction::DidntTakeTurn
+        }
+        None => {
+            game.messages.add("canceled", colors::WHITE);
+            PlayerAction::DidntTakeTurn
+        }
+    }
+}
+
 fn handle_keys(tcod: &mut Tcod, objects: &mut Vec<Object>, game: &mut Game) -> PlayerAction {
     use tcod::input::KeyCode::*;
     use PlayerAction::*;
@@ -542,6 +575,8 @@ fn handle_keys(tcod: &mut Tcod, objects: &mut Vec<Object>, game: &mut Game) -> P
         (Key { printable: 'n', .. }, true) => player_move_or_attack(1, 1, game, objects),
 
         (Key { printable: '.', ..}, true) => player_pick_up_here(game, objects),
+
+        (Key { printable: 'i', ..}, true) => show_inventory(tcod, game),
 
         _ => DidntTakeTurn,
     }
