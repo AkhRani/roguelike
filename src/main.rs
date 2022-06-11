@@ -69,6 +69,11 @@ fn monster_death(monster: &mut Object, game: &mut Game) {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Ai;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Item {
+    Heal,
+}
+
 fn normalize(delta: i32) -> i32 {
     match delta {
         0 => 0,
@@ -101,13 +106,19 @@ fn ai_take_turn(id: usize, game: &mut Game, objects: &mut [Object]) {
 
 #[derive(Debug)]
 struct Object {
+    // Properties
     x: i32,
     y: i32,
     char: char,
     color: Color,
     name: String,
+
+    // Components
     fighter: Option<Fighter>,
     ai: Option<Ai>,
+    item: Option<Item>,
+
+    // Flags (which are also kind of properties)
     is_walkable: bool,
     is_alive: bool,
     was_seen: bool,
@@ -116,13 +127,19 @@ struct Object {
 impl Object {
     pub fn new(x: i32, y: i32, char: char, name: &str, color: Color) -> Self {
         Object {
+            // Properties
             x,
             y,
             char,
             color,
             name: name.to_string(),
+
+            // Components
             fighter: None,
             ai: None,
+            item: None,
+
+            // Flags (which are also kind of properties)
             is_walkable: false,
             is_alive: true,
             was_seen: false,
@@ -197,6 +214,7 @@ const MIN_ROOM_WIDTH: i32 = 6;
 const MAX_ROOM_HEIGHT: i32 = 10;
 const MIN_ROOM_HEIGHT: i32 = 5;
 const MAX_ROOM_MONSTERS: i32 = 3;
+const MAX_ROOM_ITEMS: i32 = 1;
 
 // sizes and coordinates relevant for the GUI
 const BAR_WIDTH: i32 = 20;
@@ -303,6 +321,7 @@ impl Messages {
 struct Game {
     map: Map,
     messages: Messages,
+    inventory: Vec<Object>,
 }
 
 fn is_blocked_by_object(x: i32, y: i32, objects: &[Object]) -> bool {
@@ -352,6 +371,28 @@ fn player_move_or_attack(
             PlayerAction::TookTurn
         }
         None => move_by(PLAYER, dx, dy, &game.map, objects),
+    }
+}
+
+fn player_pick_up(object_id: usize, game: &mut Game, objects: &mut Vec<Object>) {
+    if game.inventory.len() >= 26 {
+        game.messages.add("Inventory is full", colors::RED);
+        return
+    }
+    let item = objects.swap_remove(object_id);
+    game.messages.add(format!("You picked up a {}", item.name), colors::WHITE);
+    game.inventory.push(item);
+}
+
+fn player_pick_up_here(game: &mut Game, objects: &mut Vec<Object>) -> PlayerAction {
+    let player_pos = objects[PLAYER].pos();
+
+    match objects.iter().position(|ob| ob.pos() == player_pos && ob.item.is_some()) {
+        Some(id) => {
+            player_pick_up(id, game, objects);
+            PlayerAction::TookTurn
+        }
+        _ => PlayerAction::DidntTakeTurn
     }
 }
 
@@ -412,6 +453,18 @@ fn place_objects(room: Rect, objects: &mut Vec<Object>) {
 
         objects.push(monster);
     }
+
+    let num_items = rng.gen_range(0, MAX_ROOM_ITEMS + 1);
+    for _ in 0..num_items {
+        let x = rng.gen_range(room.x1 + 1, room.x2);
+        let y = rng.gen_range(room.y1 + 1, room.y2);
+        if !is_blocked_by_object(x, y, objects) {
+            let mut potion = Object::new(x, y, '!', "health potion", colors::PINK);
+            potion.is_walkable = true;
+            potion.item = Some(Item::Heal);
+            objects.push(potion);
+        }
+    }
 }
 
 fn make_map(objects: &mut Vec<Object>) -> Map {
@@ -457,7 +510,7 @@ const SCREEN_WIDTH: i32 = 80;
 const SCREEN_HEIGHT: i32 = 50;
 const LIMIT_FPS: i32 = 20;
 
-fn handle_keys(tcod: &mut Tcod, objects: &mut [Object], game: &mut Game) -> PlayerAction {
+fn handle_keys(tcod: &mut Tcod, objects: &mut Vec<Object>, game: &mut Game) -> PlayerAction {
     use tcod::input::KeyCode::*;
     use PlayerAction::*;
 
@@ -487,6 +540,8 @@ fn handle_keys(tcod: &mut Tcod, objects: &mut [Object], game: &mut Game) -> Play
         (Key { printable: 'u', .. }, true) => player_move_or_attack(1, -1, game, objects),
         (Key { printable: 'b', .. }, true) => player_move_or_attack(-1, 1, game, objects),
         (Key { printable: 'n', .. }, true) => player_move_or_attack(1, 1, game, objects),
+
+        (Key { printable: '.', ..}, true) => player_pick_up_here(game, objects),
 
         _ => DidntTakeTurn,
     }
@@ -685,7 +740,7 @@ fn main() {
 
     let mut objects = vec![player];
 
-    let mut game = Game { map: make_map(&mut objects), messages: Messages::new() };
+    let mut game = Game { map: make_map(&mut objects), messages: Messages::new(), inventory: vec![] };
 
     for x in 0..MAP_WIDTH {
         for y in 0..MAP_HEIGHT {
