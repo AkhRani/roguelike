@@ -16,6 +16,8 @@ use std::cmp::min;
 
 const PLAYER: usize = 0;
 const POTION_HEAL: i32 = 4;
+const LIGHTNING_DAMAGE: i32 = 40;
+const LIGHTNING_RANGE: i32 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PlayerAction {
@@ -77,7 +79,8 @@ struct Ai;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Item {
-    Heal,
+    Heal,       // Potion of healing
+    Lightning,  // Scroll of lightning bolt
 }
 
 fn normalize(delta: i32) -> i32 {
@@ -434,6 +437,50 @@ fn make_v_tunnel(y1: i32, y2: i32, x: i32, map: &mut Map) {
     }
 }
 
+fn place_item(x: i32, y: i32, objects: &mut Vec<Object>) {
+    let item: Object = if rand::random::<f32>() < 0.7 {
+        let mut potion = Object::new(x, y, '!', "health potion", colors::PINK);
+        potion.is_walkable = true;
+        potion.item = Some(Item::Heal);
+        potion
+    } else {
+        let mut scroll = Object::new(x, y, '#', "scroll of lightning bolt", colors::LIGHT_YELLOW);
+        scroll.is_walkable = true;
+        scroll.item = Some(Item::Lightning);
+        scroll
+    };
+    objects.push(item);
+}
+
+fn place_monster(x: i32, y: i32, objects: &mut Vec<Object>) {
+    let monster = if rand::random::<f32>() < 0.8 {
+        // Create an orc
+        let mut orc = Object::new(x, y, 'o', "orc", colors::DESATURATED_GREEN);
+        orc.fighter = Some(Fighter {
+            max_hp: 10,
+            hp: 10,
+            defense: 0,
+            attack: 3,
+            on_death: DeathCallback::Monster,
+        });
+        orc.ai = Some(Ai);
+        orc
+    } else {
+        let mut troll = Object::new(x, y, 'T', "troll", colors::DARKER_RED);
+        troll.fighter = Some(Fighter {
+            max_hp: 16,
+            hp: 16,
+            defense: 1,
+            attack: 4,
+            on_death: DeathCallback::Monster,
+        });
+        troll.ai = Some(Ai);
+        troll
+    };
+
+    objects.push(monster);
+}
+
 fn place_objects(room: Rect, objects: &mut Vec<Object>) {
     let mut rng = rand::thread_rng();
     let num_monsters = rng.gen_range(0, MAX_ROOM_MONSTERS + 1);
@@ -443,33 +490,7 @@ fn place_objects(room: Rect, objects: &mut Vec<Object>) {
         if is_blocked_by_object(x, y, objects) {
             continue;
         }
-
-        let monster = if rand::random::<f32>() < 0.8 {
-            // Create an orc
-            let mut orc = Object::new(x, y, 'o', "orc", colors::DESATURATED_GREEN);
-            orc.fighter = Some(Fighter {
-                max_hp: 10,
-                hp: 10,
-                defense: 0,
-                attack: 3,
-                on_death: DeathCallback::Monster,
-            });
-            orc.ai = Some(Ai);
-            orc
-        } else {
-            let mut troll = Object::new(x, y, 'T', "troll", colors::DARKER_RED);
-            troll.fighter = Some(Fighter {
-                max_hp: 16,
-                hp: 16,
-                defense: 1,
-                attack: 4,
-                on_death: DeathCallback::Monster,
-            });
-            troll.ai = Some(Ai);
-            troll
-        };
-
-        objects.push(monster);
+        place_monster(x, y, objects);
     }
 
     let num_items = rng.gen_range(0, MAX_ROOM_ITEMS + 1);
@@ -477,10 +498,7 @@ fn place_objects(room: Rect, objects: &mut Vec<Object>) {
         let x = rng.gen_range(room.x1 + 1, room.x2);
         let y = rng.gen_range(room.y1 + 1, room.y2);
         if !is_blocked_by_object(x, y, objects) {
-            let mut potion = Object::new(x, y, '!', "health potion", colors::PINK);
-            potion.is_walkable = true;
-            potion.item = Some(Item::Heal);
-            objects.push(potion);
+            place_item(x, y, objects);
         }
     }
 }
@@ -560,6 +578,39 @@ fn cast_heal(
     UseResult::UsedUp
 }
 
+fn closest_monster(range: i32, objects: &[Object]) -> Option<usize> {
+    let mut closest_id = None;
+    let mut closest_distance = range + 1;
+    for (id, ob) in objects.iter().enumerate() {
+        // Reference code has ai.is_some, but I'm not sure why
+        if id != PLAYER && ob.fighter.is_some() {
+            let dist = ob.grid_distance_to(&objects[PLAYER]);
+            if dist < closest_distance {
+                closest_distance= dist;
+                closest_id = Some(id);
+            }
+        }
+    }
+    closest_id
+}
+
+fn cast_lightning(
+    _inventory_id: usize,
+    _tcod: &mut Tcod,
+    game: &mut Game,
+    objects: &mut [Object],
+) -> UseResult {
+    let monster_id = closest_monster(LIGHTNING_RANGE, objects);
+    if let Some(id) = monster_id {
+        game.messages.add(format!("A lightning bolt strikes the {}!", objects[id].name), colors::LIGHT_BLUE);
+        objects[id].take_damage(LIGHTNING_DAMAGE, game);
+        UseResult::UsedUp
+    } else {
+        game.messages.add("No monsters in range", colors::RED);
+        UseResult::Cancelled
+    }
+}
+
 fn use_item(
     inventory_id: usize,
     tcod: &mut Tcod,
@@ -569,6 +620,7 @@ fn use_item(
     if let Some(item) = game.inventory[inventory_id].item {
         let on_use = match item {
             Item::Heal => cast_heal,
+            Item::Lightning => cast_lightning,
         };
         match on_use(inventory_id, tcod, game, objects) {
             UseResult::UsedUp => {
