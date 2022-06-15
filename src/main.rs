@@ -18,6 +18,7 @@ const PLAYER: usize = 0;
 const POTION_HEAL: i32 = 4;
 const LIGHTNING_DAMAGE: i32 = 40;
 const LIGHTNING_RANGE: i32 = 5;
+const CONFUSION_TURNS: i32 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PlayerAction {
@@ -74,13 +75,17 @@ fn monster_death(monster: &mut Object, game: &mut Game) {
     monster.name = format!("remains of {}", monster.name);
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Ai;
+#[derive(Clone, Debug, PartialEq)]
+enum Ai {
+    Basic,
+    Confused { previous: Box<Ai>, turns: i32 },
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Item {
-    Heal,       // Potion of healing
-    Lightning,  // Scroll of lightning bolt
+    Heal,      // Potion of healing
+    Lightning, // Scroll of lightning bolt
+    Confusion, // Scroll of confusion
 }
 
 fn normalize(delta: i32) -> i32 {
@@ -101,15 +106,46 @@ fn move_towards(id: usize, target_x: i32, target_y: i32, map: &MapSlice, objects
     }
 }
 
-fn ai_take_turn(id: usize, game: &mut Game, objects: &mut [Object]) {
-    assert_ne!(id, PLAYER);
-    if objects[id].grid_distance_to(&objects[PLAYER]) > 1 {
-        let (player_x, player_y) = objects[PLAYER].pos();
-        move_towards(id, player_x, player_y, &game.map, objects);
-    } else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
+fn attack_player(id: usize, game: &mut Game, objects: &mut [Object]) {
+    if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
         // TODO: if objects[PLAYER].fighter.hp > 0 {
         let (player_slice, ai_slice) = objects.split_at_mut(id);
         ai_slice[0].attack(&mut player_slice[0], game);
+    }
+}
+
+fn ai_take_turn(id: usize, game: &mut Game, objects: &mut [Object]) {
+    assert_ne!(id, PLAYER);
+    match &mut objects[id].ai {
+        Some(Ai::Basic) => {
+            if objects[id].grid_distance_to(&objects[PLAYER]) > 1 {
+                let (player_x, player_y) = objects[PLAYER].pos();
+                move_towards(id, player_x, player_y, &game.map, objects);
+            } else {
+                attack_player(id, game, objects);
+            }
+        }
+        Some(Ai::Confused { previous, turns }) => {
+            if *turns > 0 {
+                *turns -= 1;
+            }
+            if *turns == 0 {
+                objects[id].ai = Some(*previous.clone());
+            }
+
+            let dx: i32 = (rand::random::<f32>() * 3.0) as i32 - 1;
+            let dy: i32 = (rand::random::<f32>() * 3.0) as i32 - 1;
+            println!("dx, dy = {}, {}", dx, dy);
+            let (tx, ty) = (objects[id].x + dx, objects[id].y + dy);
+            if objects[PLAYER].pos() == (tx, ty) {
+                attack_player(id, game, objects);
+            } else {
+                move_by(id, dx, dy, &game.map, objects);
+            }
+        }
+        None => {
+            println!("No AI!!!");
+        }
     }
 }
 
@@ -438,15 +474,21 @@ fn make_v_tunnel(y1: i32, y2: i32, x: i32, map: &mut Map) {
 }
 
 fn place_item(x: i32, y: i32, objects: &mut Vec<Object>) {
-    let item: Object = if rand::random::<f32>() < 0.7 {
-        let mut potion = Object::new(x, y, '!', "health potion", colors::PINK);
+    let r = rand::random::<f32>();
+    let item: Object = if r < 0.7 {
+        let mut potion = Object::new(x, y, '!', "health potion", colors::ORANGE);
         potion.is_walkable = true;
         potion.item = Some(Item::Heal);
         potion
-    } else {
+    } else if r < 0.8 {
         let mut scroll = Object::new(x, y, '#', "scroll of lightning bolt", colors::LIGHT_YELLOW);
         scroll.is_walkable = true;
         scroll.item = Some(Item::Lightning);
+        scroll
+    } else {
+        let mut scroll = Object::new(x, y, '#', "scroll of confusion", colors::LIGHT_BLUE);
+        scroll.is_walkable = true;
+        scroll.item = Some(Item::Confusion);
         scroll
     };
     objects.push(item);
@@ -463,7 +505,7 @@ fn place_monster(x: i32, y: i32, objects: &mut Vec<Object>) {
             attack: 3,
             on_death: DeathCallback::Monster,
         });
-        orc.ai = Some(Ai);
+        orc.ai = Some(Ai::Basic);
         orc
     } else {
         let mut troll = Object::new(x, y, 'T', "troll", colors::DARKER_RED);
@@ -474,7 +516,7 @@ fn place_monster(x: i32, y: i32, objects: &mut Vec<Object>) {
             attack: 4,
             on_death: DeathCallback::Monster,
         });
-        troll.ai = Some(Ai);
+        troll.ai = Some(Ai::Basic);
         troll
     };
 
@@ -582,11 +624,13 @@ fn closest_monster(range: i32, objects: &[Object]) -> Option<usize> {
     let mut closest_id = None;
     let mut closest_distance = range + 1;
     for (id, ob) in objects.iter().enumerate() {
-        // Reference code has ai.is_some, but I'm not sure why
+        // Reference code has ai.is_some, but I'm not sure why.
+        // Possibly, it's to guarantee that the confusion spell can
+        // safely dereferen
         if id != PLAYER && ob.fighter.is_some() {
             let dist = ob.grid_distance_to(&objects[PLAYER]);
             if dist < closest_distance {
-                closest_distance= dist;
+                closest_distance = dist;
                 closest_id = Some(id);
             }
         }
@@ -602,8 +646,30 @@ fn cast_lightning(
 ) -> UseResult {
     let monster_id = closest_monster(LIGHTNING_RANGE, objects);
     if let Some(id) = monster_id {
-        game.messages.add(format!("A lightning bolt strikes the {}!", objects[id].name), colors::LIGHT_BLUE);
+        game.messages
+            .add(format!("A lightning bolt strikes the {}!", objects[id].name), colors::LIGHT_BLUE);
         objects[id].take_damage(LIGHTNING_DAMAGE, game);
+        UseResult::UsedUp
+    } else {
+        game.messages.add("No monsters in range", colors::RED);
+        UseResult::Cancelled
+    }
+}
+
+fn cast_confusion(
+    _inventory_id: usize,
+    _tcod: &mut Tcod,
+    game: &mut Game,
+    objects: &mut [Object],
+) -> UseResult {
+    let monster_id = closest_monster(LIGHTNING_RANGE, objects);
+    if let Some(id) = monster_id {
+        game.messages
+            .add(format!("The {} begins acting strangely!", objects[id].name), colors::LIGHT_BLUE);
+        objects[id].ai = Some(Ai::Confused {
+            previous: Box::new(objects[id].ai.clone().unwrap()),
+            turns: CONFUSION_TURNS,
+        });
         UseResult::UsedUp
     } else {
         game.messages.add("No monsters in range", colors::RED);
@@ -621,6 +687,7 @@ fn use_item(
         let on_use = match item {
             Item::Heal => cast_heal,
             Item::Lightning => cast_lightning,
+            Item::Confusion => cast_confusion,
         };
         match on_use(inventory_id, tcod, game, objects) {
             UseResult::UsedUp => {
@@ -883,6 +950,22 @@ fn main() {
 
     let mut game =
         Game { map: make_map(&mut objects), messages: Messages::new(), inventory: vec![] };
+
+    // Provide items for testing
+    let mut potion = Object::new(0, 0, '!', "health potion", colors::ORANGE);
+    potion.is_walkable = true;
+    potion.item = Some(Item::Heal);
+    game.inventory.push(potion);
+
+    let mut scroll = Object::new(0, 0, '#', "scroll of lightning bolt", colors::LIGHT_YELLOW);
+    scroll.is_walkable = true;
+    scroll.item = Some(Item::Lightning);
+    game.inventory.push(scroll);
+
+    let mut scroll = Object::new(0, 0, '#', "scroll of confusion", colors::LIGHT_BLUE);
+    scroll.is_walkable = true;
+    scroll.item = Some(Item::Confusion);
+    game.inventory.push(scroll);
 
     for x in 0..MAP_WIDTH {
         for y in 0..MAP_HEIGHT {
