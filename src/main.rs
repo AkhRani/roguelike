@@ -15,12 +15,18 @@ use std::cmp::max;
 use std::cmp::min;
 
 const PLAYER: usize = 0;
+const POTION_HEAL: i32 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PlayerAction {
     TookTurn,
     DidntTakeTurn,
     Exit,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum UseResult {
+    UsedUp,
+    Cancelled,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -167,6 +173,15 @@ impl Object {
             } else {
                 fighter.hp -= damage;
             }
+        }
+    }
+
+    pub fn heal(&mut self, healing: i32) {
+        if healing <= 0 {
+            return;
+        }
+        if let Some(fighter) = self.fighter.as_mut() {
+            fighter.hp = min(fighter.max_hp, fighter.hp + healing);
         }
     }
 
@@ -535,15 +550,50 @@ fn show_list<U: AsRef<str>>(tcod: &mut Tcod, items: &[U]) -> Option<usize> {
     None
 }
 
-fn show_inventory(tcod: &mut Tcod, game: &mut Game) -> PlayerAction {
+fn cast_heal(
+    _inventory_id: usize,
+    _tcod: &mut Tcod,
+    _game: &mut Game,
+    objects: &mut [Object],
+) -> UseResult {
+    objects[PLAYER].heal(POTION_HEAL);
+    UseResult::UsedUp
+}
+
+fn use_item(
+    inventory_id: usize,
+    tcod: &mut Tcod,
+    game: &mut Game,
+    objects: &mut [Object],
+) -> UseResult {
+    if let Some(item) = game.inventory[inventory_id].item {
+        let on_use = match item {
+            Item::Heal => cast_heal,
+        };
+        match on_use(inventory_id, tcod, game, objects) {
+            UseResult::UsedUp => {
+                // swap_remove is more efficient, but would re-order things,
+                // which might surprise the player
+                game.inventory.remove(inventory_id);
+                UseResult::UsedUp
+            }
+            UseResult::Cancelled => UseResult::Cancelled,
+        }
+    } else {
+        game.messages.add("Not sure what to do with this", colors::YELLOW);
+        UseResult::Cancelled
+    }
+}
+
+fn show_inventory(tcod: &mut Tcod, game: &mut Game, objects: &mut [Object]) -> PlayerAction {
     let inv_names: Vec<String> = game.inventory.iter().map(|ob| ob.name.clone()).collect();
     match show_list(tcod, &inv_names) {
-        Some(id) => {
-            game.messages.add(format!("You picked {}", id), colors::WHITE);
-            PlayerAction::DidntTakeTurn
-        }
+        Some(id) => match use_item(id, tcod, game, objects) {
+            UseResult::UsedUp => PlayerAction::TookTurn,
+            UseResult::Cancelled => PlayerAction::DidntTakeTurn,
+        },
         None => {
-            game.messages.add("canceled", colors::WHITE);
+            game.messages.add("cancelled", colors::WHITE);
             PlayerAction::DidntTakeTurn
         }
     }
@@ -582,7 +632,7 @@ fn handle_keys(tcod: &mut Tcod, objects: &mut Vec<Object>, game: &mut Game) -> P
 
         (Key { printable: '.', .. }, true) => player_pick_up_here(game, objects),
 
-        (Key { printable: 'i', .. }, true) => show_inventory(tcod, game),
+        (Key { printable: 'i', .. }, true) => show_inventory(tcod, game, objects),
 
         _ => DidntTakeTurn,
     }
